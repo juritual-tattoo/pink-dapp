@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>INKPINK | JU Tattoo Ecosystem</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                pink: '#ed00b2',
+                bg: '#e8e9e2',
+                dark: '#1a1a1a',
+                gray: '#a0a0a0'
+              }
+            },
+            fontFamily: {
+              mono: ['Courier New', 'Courier', 'monospace'],
+              sans: ['Inter', 'sans-serif']
+            },
+            animation: {
+              'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'slide-up': 'slideUp 0.3s ease-out forwards'
+            },
+            keyframes: {
+              slideUp: {
+                '0%': { transform: 'translateY(100%)', opacity: '0' },
+                '100%': { transform: 'translateY(0)', opacity: '1' },
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      body {
+        background-color: #e8e9e2;
+        color: #1a1a1a;
+        overscroll-behavior: none;
+      }
+      /* Disable pull-to-refresh on mobile */
+      html, body {
+        height: 100%;
+        overflow: hidden;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
