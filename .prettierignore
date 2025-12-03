@@ -1,0 +1,24 @@
+# Dependencies
+node_modules
+package-lock.json
+
+# Build outputs
+dist
+build
+*.min.js
+
+# Generated files
+*.log
+.DS_Store
+
+# Config files that should not be formatted
+*.config.js
+tailwind.config.js
+postcss.config.js
+
+# Public assets
+public/**/*.png
+public/**/*.jpg
+public/**/*.svg
+public/**/*.ico
+

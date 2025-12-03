@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #e8e9e2;
+  color: #1a1a1a;
+  overscroll-behavior: none;
+}
+
+/* Disable pull-to-refresh on mobile */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}

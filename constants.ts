@@ -22,7 +22,7 @@ export const PALETTE: ColorPalette[] = [
 export const CANVAS_SIZE = 32; // 32x32 grid
 export const XP_PER_PIXEL = 5;
 export const XP_WALLET_THRESHOLD = 50; // Trigger wallet creation after ~10 pixels
-export const MOCK_WALLET_ADDRESS = "0x71C...9A23";
+export const MOCK_WALLET_ADDRESS = '0x71C...9A23';
 
 // Placeholder for the "Template" user traces over
 // Using a simple SVG data URI as a placeholder for the "Flash"

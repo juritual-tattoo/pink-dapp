@@ -1,7 +1,29 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { CANVAS_SIZE, BRAND_COLORS, FLASH_TEMPLATE_URI } from '../constants';
+import { CANVAS_SIZE, FLASH_TEMPLATE_URI } from '../constants';
 import { mcp } from '../services/mcp';
-import { PixelData } from '../types';
+import {
+  isValidCanvasCoordinate,
+  isValidColor,
+  validateAndSanitizeCoordinates,
+} from '../utils/validation';
+
+// Limite máximo do histórico
+const MAX_HISTORY_SIZE = 50;
+
+// Função throttle para limitar frequência de eventos
+function throttle<T extends (...args: unknown[]) => void>(
+  func: T,
+  limit: number
+): (...args: Parameters<T>) => void {
+  let inThrottle: boolean;
+  return function (...args: Parameters<T>) {
+    if (!inThrottle) {
+      func(...args);
+      inThrottle = true;
+      setTimeout(() => (inThrottle = false), limit);
+    }
+  };
+}
 
 export interface CanvasBoardActions {
   undo: () => void;
@@ -17,13 +39,13 @@ interface CanvasBoardProps {
   onHistoryChange: (canUndo: boolean, canRedo: boolean) => void;
 }
 
-const CanvasBoard: React.FC<CanvasBoardProps> = ({ 
-  currentColor, 
-  isEraser, 
-  onInteract, 
+const CanvasBoard: React.FC<CanvasBoardProps> = ({
+  currentColor,
+  isEraser,
+  onInteract,
   getCanvasRef,
   actionRef,
-  onHistoryChange
+  onHistoryChange,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -32,10 +54,61 @@ const CanvasBoard: React.FC<CanvasBoardProps> = ({
   const initialMap = useMemo(() => new Map<string, string>(), []);
   const [history, setHistory] = useState<Map<string, string>[]>([initialMap]);
   const [historyStep, setHistoryStep] = useState(0);
-  
+
   // Current pixels state
   const [pixels, setPixels] = useState<Map<string, string>>(initialMap);
   const [isDrawing, setIsDrawing] = useState(false);
+
+  // Ref para acessar pixels atual sem depender dele no useCallback
+  const pixelsRef = useRef<Map<string, string>>(initialMap);
+
+  // Atualizar ref sempre que pixels mudar
+  useEffect(() => {
+    pixelsRef.current = pixels;
+  }, [pixels]);
+
+  // Cache da imagem do template
+  const templateImageRef = useRef<HTMLImageElement | null>(null);
+  const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Carregar imagem do template uma única vez
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      templateImageRef.current = img;
+    };
+    img.onerror = (error) => {
+      console.error('Erro ao carregar template:', error);
+    };
+    img.src = FLASH_TEMPLATE_URI;
+  }, []);
+
+  // Criar canvas estático para o grid (desenhado uma única vez)
+  useEffect(() => {
+    const gridCanvas = document.createElement('canvas');
+    gridCanvas.width = CANVAS_SIZE;
+    gridCanvas.height = CANVAS_SIZE;
+    const gridCtx = gridCanvas.getContext('2d');
+
+    if (gridCtx) {
+      try {
+        gridCtx.strokeStyle = '#000000';
+        gridCtx.globalAlpha = 0.05;
+        gridCtx.lineWidth = 0.05;
+        gridCtx.beginPath();
+        for (let i = 0; i <= CANVAS_SIZE; i++) {
+          gridCtx.moveTo(i, 0);
+          gridCtx.lineTo(i, CANVAS_SIZE);
+          gridCtx.moveTo(0, i);
+          gridCtx.lineTo(CANVAS_SIZE, i);
+        }
+        gridCtx.stroke();
+        gridCanvasRef.current = gridCanvas;
+      } catch (error) {
+        console.error('Erro ao desenhar grid:', error);
+      }
+    }
+  }, []);
 
   // Expose Undo/Redo actions
   const undo = useCallback(() => {
@@ -74,30 +147,50 @@ const CanvasBoard: React.FC<CanvasBoardProps> = ({
     }
   }, [getCanvasRef]);
 
-  const drawPixel = useCallback((x: number, y: number) => {
-    const key = `${x},${y}`;
-    const currentPixel = pixels.get(key);
-    
-    // Prevent redraw same color (optimization)
-    if (currentPixel === currentColor && !isEraser) return;
-    if (!currentPixel && isEraser) return;
+  // Otimizado: usa ref para acessar pixels atual sem depender dele
+  const drawPixel = useCallback(
+    (x: number, y: number) => {
+      // Validação profissional de coordenadas
+      if (!isValidCanvasCoordinate(x, y)) {
+        console.warn('[CanvasBoard] Coordenadas inválidas:', { x, y });
+        return;
+      }
 
-    const newPixels = new Map(pixels);
-    
-    if (isEraser) {
-      newPixels.delete(key);
-    } else {
-      newPixels.set(key, currentColor);
-    }
-    
-    setPixels(newPixels);
-    
-    // Notify MCP only on drawing, not erasing empty
-    if (!isEraser || currentPixel) {
-      mcp.logEvent('draw.pixel', { x, y, color: isEraser ? 'none' : currentColor });
-      onInteract();
-    }
-  }, [pixels, currentColor, isEraser, onInteract]);
+      const key = `${x},${y}`;
+      const currentPixels = pixelsRef.current; // Usa ref ao invés de pixels diretamente
+      const currentPixel = currentPixels.get(key);
+
+      // Prevent redraw same color (optimization)
+      if (currentPixel === currentColor && !isEraser) return;
+      if (!currentPixel && isEraser) return;
+
+      const newPixels = new Map(currentPixels);
+
+      if (isEraser) {
+        newPixels.delete(key);
+      } else {
+        // Validação profissional de cor
+        if (!isValidColor(currentColor)) {
+          console.warn('[CanvasBoard] Cor inválida:', currentColor);
+          return;
+        }
+        newPixels.set(key, currentColor);
+      }
+
+      setPixels(newPixels);
+
+      // Notify MCP only on drawing, not erasing empty
+      if (!isEraser || currentPixel) {
+        try {
+          mcp.logEvent('draw.pixel', { x, y, color: isEraser ? 'none' : currentColor });
+          onInteract();
+        } catch (error) {
+          console.error('[CanvasBoard] Erro ao registrar evento:', error);
+        }
+      }
+    },
+    [currentColor, isEraser, onInteract]
+  ); // Removido pixels das dependências
 
   const getCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
     if (!canvasRef.current) return null;
@@ -109,50 +202,73 @@ const CanvasBoard: React.FC<CanvasBoardProps> = ({
     const x = Math.floor(((clientX - rect.left) / rect.width) * CANVAS_SIZE);
     const y = Math.floor(((clientY - rect.top) / rect.height) * CANVAS_SIZE);
 
-    if (x >= 0 && x < CANVAS_SIZE && y >= 0 && y < CANVAS_SIZE) {
-      return { x, y };
-    }
-    return null;
+    // Usar validação profissional
+    return validateAndSanitizeCoordinates(x, y);
   };
+
+  // Throttled version do drawPixel para melhor performance
+  // O throttle só é chamado em event handlers (handleMove), nunca durante render
+  // Nota: ESLint pode avisar sobre refs, mas é um falso positivo neste caso
+  const drawPixelThrottled = useMemo(
+    () =>
+      throttle((x: number, y: number) => {
+        drawPixel(x, y);
+      }, 16), // ~60fps (16ms)
+    [drawPixel]
+  );
 
   const handleStart = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault(); // Prevent scrolling
     setIsDrawing(true);
     const coords = getCoordinates(e);
-    if (coords) drawPixel(coords.x, coords.y);
+    if (coords) {
+      // No início, desenha imediatamente (sem throttle)
+      drawPixel(coords.x, coords.y);
+    }
   };
 
   const handleMove = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawing) return;
     e.preventDefault();
     const coords = getCoordinates(e);
-    if (coords) drawPixel(coords.x, coords.y);
+    if (coords) {
+      // Durante o movimento, usa throttle para melhor performance
+      drawPixelThrottled(coords.x, coords.y);
+    }
   };
 
-  const handleEnd = () => {
+  const handleEnd = useCallback(() => {
     setIsDrawing(false);
-    
+
     // If the pixel state has changed from the current history snapshot, push new state
     const currentSnapshot = history[historyStep];
-    
+
     // Helper to check map equality efficiently for this use case
     const areDifferent = () => {
-        if (pixels.size !== currentSnapshot.size) return true;
-        for (const [key, val] of pixels) {
-            if (!currentSnapshot.has(key) || currentSnapshot.get(key) !== val) return true;
-        }
-        return false;
+      if (pixels.size !== currentSnapshot.size) return true;
+      for (const [key, val] of pixels) {
+        if (!currentSnapshot.has(key) || currentSnapshot.get(key) !== val) return true;
+      }
+      return false;
     };
 
     if (areDifferent()) {
       const newHistory = history.slice(0, historyStep + 1);
-      newHistory.push(pixels);
-      setHistory(newHistory);
-      setHistoryStep(newHistory.length - 1);
-    }
-  };
+      newHistory.push(new Map(pixels)); // Criar nova instância do Map
 
-  // Rendering Loop
+      // Limitar tamanho do histórico
+      if (newHistory.length > MAX_HISTORY_SIZE) {
+        newHistory.shift(); // Remove o mais antigo
+        setHistoryStep(MAX_HISTORY_SIZE - 1);
+      } else {
+        setHistoryStep(newHistory.length - 1);
+      }
+
+      setHistory(newHistory);
+    }
+  }, [history, historyStep, pixels]);
+
+  // Rendering Loop - Otimizado
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -160,44 +276,43 @@ const CanvasBoard: React.FC<CanvasBoardProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Clear
-    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    
-    // 1. Draw Template (Background Layer - 10% Opacity)
-    // In a real app, this would be an Image object. 
-    // For MVP, we draw the simplified SVG path or shapes.
-    ctx.save();
-    ctx.globalAlpha = 0.1;
-    const img = new Image();
-    img.src = FLASH_TEMPLATE_URI;
-    // We assume image loads fast since it's data URI, but normally use onload
-    ctx.drawImage(img, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    ctx.restore();
+    try {
+      // Clear
+      ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-    // 2. Draw Pixels
-    pixels.forEach((color, key) => {
-      const [x, y] = key.split(',').map(Number);
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y, 1, 1);
-    });
+      // 1. Draw Template (Background Layer - 10% Opacity) - usando imagem em cache
+      if (templateImageRef.current) {
+        ctx.save();
+        ctx.globalAlpha = 0.1;
+        ctx.drawImage(templateImageRef.current, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        ctx.restore();
+      }
 
-    // 3. Grid Lines (Optional - very faint)
-    ctx.strokeStyle = '#000000';
-    ctx.globalAlpha = 0.05;
-    ctx.lineWidth = 0.05;
-    ctx.beginPath();
-    for (let i = 0; i <= CANVAS_SIZE; i++) {
-      ctx.moveTo(i, 0);
-      ctx.lineTo(i, CANVAS_SIZE);
-      ctx.moveTo(0, i);
-      ctx.lineTo(CANVAS_SIZE, i);
+      // 2. Draw Grid (usando canvas estático em cache)
+      if (gridCanvasRef.current) {
+        ctx.drawImage(gridCanvasRef.current, 0, 0);
+      }
+
+      // 3. Draw Pixels
+      pixels.forEach((color, key) => {
+        try {
+          const [x, y] = key.split(',').map(Number);
+          // Validação de coordenadas
+          if (x >= 0 && x < CANVAS_SIZE && y >= 0 && y < CANVAS_SIZE) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, 1, 1);
+          }
+        } catch (error) {
+          console.error('Erro ao desenhar pixel:', key, error);
+        }
+      });
+    } catch (error) {
+      console.error('Erro na renderização do canvas:', error);
     }
-    ctx.stroke();
-
   }, [pixels]);
 
   return (
-    <div 
+    <div
       ref={containerRef}
       className="relative w-full max-w-[400px] aspect-square mx-auto shadow-2xl bg-white border-4 border-brand-dark cursor-crosshair touch-none select-none z-0"
     >
